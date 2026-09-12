@@ -7,4 +7,3 @@ class Base(DeclarativeBase):
     pass
 
 engine = create_engine(config.DB_URL, echo=True)
-Base.metadata.create_all(engine)
