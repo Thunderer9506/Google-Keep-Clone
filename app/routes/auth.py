@@ -1,10 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel
+
+from sqlalchemy import select, or_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from db import get_db_session
+from models import User
+from config import config
+
+from pydantic import BaseModel, Field, field_validator
 import bcrypt
 import jwt
-from config import config
 from datetime import datetime, timedelta, timezone
+
+
+SECRET_KEY = config.SECRET_KEY
+ALGORITHM = config.ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = config.ACCESS_TOKEN_EXPIRE_MINUTES
 
 auth_router = APIRouter(
     prefix="/auth",
@@ -13,35 +25,70 @@ auth_router = APIRouter(
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")  
 
 class Credentials(BaseModel):
-    username: str
-    password: str
+    username: str = Field(
+        ...,
+        description="The username of the user",
+        examples=["JohnDoe"],
+        min_length=3,
+        max_length=50,
+        pattern=r"^[a-zA-Z0-9_]+$",
+    )
+    email: str = Field(
+        ...,
+        description="The email of the user",
+        examples=["john.doe@example.com"],
+        pattern=r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$",
+    )
+    password: str = Field(
+        ...,
+        description="The user's password",
+        examples=["Password123"],
+        min_length=6,
+        max_length=50,
+        pattern=r"^[a-zA-Z\d@$!%*?&]{6,50}$",
+    )
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if not any(char.islower() for char in value):
+            raise ValueError("Password must contain a lowercase letter")
+        if not any(char.isupper() for char in value):
+            raise ValueError("Password must contain an uppercase letter")
+        if not any(char.isdigit() for char in value):
+            raise ValueError("Password must contain a digit")
+        return value
 class Token(BaseModel):
     access_token: str
     token_type: str = "Bearer"
 
-SECRET_KEY = config.SECRET_KEY
-ALGORITHM = config.ALGORITHM
-ACCESS_TOKEN_EXPIRE_MINUTES = config.ACCESS_TOKEN_EXPIRE_MINUTES
+async def authenticate_user(username: str, password: str, session: AsyncSession) -> User | None:
+    try: 
+        # User will be able to login with either username or email
+        findUser_stmt = select(User).where(or_(User.username == username, User.email == username))
+        user = await session.execute(findUser_stmt)
+        user: User | None = user.scalar_one_or_none()
+        print(user)
+        if user is None:
+            return None
+        
+        if bcrypt.checkpw(password.encode("utf-8"), user.password.encode("utf-8")):
+            return user
+    except Exception as e:
+        print(f"Error occurred while authenticating user: {e}")
 
-users: dict[str, dict] = dict()  # In-memory user store for demonstration purposes
+    return None
 
-def authenticate_user(username: str, password: str):
-    if username in users:
-        stored_hashed_password = users[username]["password"]
-        bytes_password = password.encode('utf-8')
-        if bcrypt.checkpw(bytes_password, stored_hashed_password):
-            return True
-    return False
-
-def create_access_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+def create_access_token(payload: dict)-> str:
+    to_encode = payload.copy()
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    to_encode.update({"iat": now})
+    encoded_jwt = jwt.encode(payload = to_encode, key = SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-async def get_user(token: str = Depends(oauth2_scheme)):
+async def get_user(token: str = Depends(oauth2_scheme), db_session: AsyncSession = Depends(get_db_session)) -> User:
     cred_exc = HTTPException(
         status_code=401,
         detail="Could not validate credentials",
@@ -49,35 +96,62 @@ async def get_user(token: str = Depends(oauth2_scheme)):
     )
     try:
         payload = jwt.decode(token, config.SECRET_KEY, algorithms=[config.ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        userId: str = payload.get("sub")
+        if userId is None:
             raise cred_exc
     except Exception:
         raise cred_exc
-    user = users[username] if username in users else None
-    if user is None:
+
+    try:
+        findUser_stmt = select(User).where(User.id == userId)
+        user = await db_session.execute(findUser_stmt)
+        user: User | None = user.scalar_one_or_none()
+        if user is None:
+            raise cred_exc
+    except SQLAlchemyError as e:
         raise cred_exc
-    return {"username": username, "password": users[username]["password"]}
+    
+    return user
 
 @auth_router.post("/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: AsyncSession = Depends(get_db_session)):
     # Placeholder for login logic
-    if not authenticate_user(form_data.username, form_data.password):
+    user = await authenticate_user(form_data.username, form_data.password, session=session)
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    access_token = create_access_token(data={"sub": form_data.username})
-    return {"access_token": access_token, "token_type": "Bearer"}
+    payload = {"sub": user.id, "username": user.username, "email": user.email}
+    access_token = create_access_token(payload)
+    return Token(access_token=access_token, token_type="Bearer")
 
-@auth_router.post("/register")
-async def register(request: Credentials):
+@auth_router.post("/register", description="Register a new user", summary="User Registration", status_code=status.HTTP_201_CREATED)
+async def register(req: Credentials, db_session: AsyncSession = Depends(get_db_session)):
     # Placeholder for registration logic
-    password = request.password
-    bytes_password = password.encode('utf-8')
-    hashed_password = bcrypt.hashpw(bytes_password, bcrypt.gensalt())
-    users[request.username] = {"password": hashed_password}
-
-    return {"message": "Register endpoint", "username": request.username, "password": password, "hashed_password": hashed_password}
+    try:
+        password = req.password
+        bytes_password = password.encode('utf-8')
+        hashed_password = bcrypt.hashpw(bytes_password, bcrypt.gensalt())
+        newUser = User(
+            username=req.username, 
+            email=req.email,
+            password=hashed_password.decode("utf-8")
+        )
+        db_session.add(newUser)
+        await db_session.commit()
+    except IntegrityError as e:
+        await db_session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username or email already exists",
+        )
+    except SQLAlchemyError as e:
+        await db_session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error",
+        )
+    return {"message": "User registered successfully", "username": req.username, "email": req.email}
+        
