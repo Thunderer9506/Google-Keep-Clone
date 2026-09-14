@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
 from contextlib import asynccontextmanager
 
 from models import User
@@ -27,10 +27,13 @@ app = FastAPI(
 app.include_router(auth_router)
 
 
-@app.get("/")
+@app.get("/", status_code=status.HTTP_200_OK)
 async def root():
     return {"message": "Welcome to the Google Keep Clone API!"}
 
-@app.get("/users")
-async def get_current_user(current_user = Depends(get_user)):
-    return {"username": current_user["username"], "hashed_password": current_user["password"]}
+@app.get("/me", status_code=status.HTTP_200_OK)
+async def get_current_user(current_user: User = Depends(get_user)):
+    return {"id": current_user.id, 
+            "email": current_user.email, 
+            "username": current_user.username, 
+            "password": current_user.password}
