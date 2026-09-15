@@ -4,9 +4,9 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from db import get_db_session
-from models import User
-from config import config
+from app.db import get_db_session
+from app.models import User
+from app.config import config
 
 from pydantic import BaseModel, Field, field_validator
 import bcrypt
@@ -90,7 +90,7 @@ def create_access_token(payload: dict)-> str:
 
 async def get_user(token: str = Depends(oauth2_scheme), db_session: AsyncSession = Depends(get_db_session)) -> User:
     cred_exc = HTTPException(
-        status_code=401,
+        status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
@@ -109,7 +109,10 @@ async def get_user(token: str = Depends(oauth2_scheme), db_session: AsyncSession
         if user is None:
             raise cred_exc
     except SQLAlchemyError as e:
-        raise cred_exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error",
+        )
     
     return user
 
