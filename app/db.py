@@ -1,7 +1,10 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from typing import AsyncGenerator
 from sqlalchemy.orm import DeclarativeBase
-from config import config
+from app.config import config
+
+class Base(DeclarativeBase):
+    pass
 
 engine = create_async_engine(config.DB_URL, echo=True)
 
@@ -22,6 +25,3 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
         finally:
             await session.close()
         
-class Base(DeclarativeBase):
-    pass
-
