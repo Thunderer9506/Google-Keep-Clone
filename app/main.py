@@ -1,10 +1,10 @@
 from fastapi import Depends, FastAPI, HTTPException, status
 from contextlib import asynccontextmanager
 
-from models import User
-from db import engine, Base, get_db_session
+from app.models import User
+from app.db import engine, Base, get_db_session
 
-from routes.auth import auth_router, get_user
+from app.routes.auth import auth_router, get_user
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,5 +35,5 @@ async def root():
 async def get_current_user(current_user: User = Depends(get_user)):
     return {"id": current_user.id, 
             "email": current_user.email, 
-            "username": current_user.username, 
-            "password": current_user.password}
+            "username": current_user.username
+            }
