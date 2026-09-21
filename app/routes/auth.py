@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from app.db import get_db_session
@@ -68,7 +68,7 @@ async def authenticate_user(username: str, password: str, session: AsyncSession)
         findUser_stmt = select(User).where(or_(User.username == username, User.email == username))
         user = await session.execute(findUser_stmt)
         user: User | None = user.scalar_one_or_none()
-        print(user)
+        
         if user is None:
             return None
         
@@ -111,7 +111,7 @@ async def get_user(token: str = Depends(oauth2_scheme), db_session: AsyncSession
     except SQLAlchemyError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
+            detail="Database error, Details: " + str(e),
         )
     
     return user
@@ -130,6 +130,29 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Async
     access_token = create_access_token(payload)
     return Token(access_token=access_token, token_type="Bearer")
 
+async def check_before_register(user:User, db_session: AsyncSession):
+    try:
+        # Check if the username or email already exists in the database
+        findUser_stmt = select(User).where(
+            or_(func.lower(User.username) == user.username.lower(), 
+                func.lower(User.email) == user.email.lower())
+                )
+        existing_user = await db_session.execute(findUser_stmt)
+        existing_user: User | None = existing_user.scalar_one_or_none()
+        if existing_user is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username or email already exists",
+            )
+
+        return None
+    except SQLAlchemyError as e:
+        return HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error, Details: " + str(e),
+        )
+
+
 @auth_router.post("/register", description="Register a new user", summary="User Registration", status_code=status.HTTP_201_CREATED)
 async def register(req: Credentials, db_session: AsyncSession = Depends(get_db_session)):
     # Placeholder for registration logic
@@ -142,6 +165,7 @@ async def register(req: Credentials, db_session: AsyncSession = Depends(get_db_s
             email=req.email,
             password=hashed_password.decode("utf-8")
         )
+        await check_before_register(newUser, db_session)
         db_session.add(newUser)
         await db_session.commit()
     except IntegrityError as e:
@@ -154,7 +178,7 @@ async def register(req: Credentials, db_session: AsyncSession = Depends(get_db_s
         await db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
+            detail="Database error, Details: " + str(e),
         )
     return {"message": "User registered successfully", "username": req.username, "email": req.email}
         
