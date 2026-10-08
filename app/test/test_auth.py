@@ -182,41 +182,95 @@ def testCase3_register_route():
         }
 
     response = client.post("/auth/register", json=payload1)
-    assert response.status_code == 422  # Unprocessable Entity
+    assert response.status_code == 422
 
     response = client.post("/auth/register", json=payload2)
-    assert response.status_code == 422  # Unprocessable Entity
+    assert response.status_code == 422
 
     response = client.post("/auth/register", json=payload3)
-    assert response.status_code == 422  # Unprocessable Entity
+    assert response.status_code == 422
 
     response = client.post("/auth/register", json=payload4)
-    assert response.status_code == 422  # Unprocessable Entity
+    assert response.status_code == 422
 
     response = client.post("/auth/register", json=payload5)
-    assert response.status_code == 422  # Unprocessable Entity
+    assert response.status_code == 422
 
     response = client.post("/auth/register", json=payload6)
-    assert response.status_code == 422  # Unprocessable Entity
+    assert response.status_code == 422
 
     response = client.post("/auth/register", json=payload7)
-    assert response.status_code == 422  # Unprocessable Entity
+    assert response.status_code == 422
 
     response = client.post("/auth/register", json=payload8)
-    assert response.status_code == 201  # Unprocessable Entity
+    assert response.status_code == 201
     assert response.json()["message"] == "User registered successfully"
     assert "isadmin" not in response.json() and "isverified" not in response.json()  # Extra fields should not be returned
+
+# ----------------------- Login Route Test Cases -----------------------
+
+# Inject Register user using fixture for login tests
+@pytest.fixture()
+def InjectRegisterUser():
+    payload = {
+            "username": "Testuser",
+            "email": "testuser@example.com",
+            "password": "Testpassword1234",
+        }
+    response = client.post("/auth/register", json=payload)
+    assert response.status_code == 201
+
+    return response.json()
+
+# Test case: Login with incorrect credentials
+def testCase1_login_route(InjectRegisterUser):
+    payload = {
+        "username": "Testuser",
+        "password": "Testpassword123",
+    }
+    response = client.post("/auth/login", data=payload)
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Incorrect username or password"
+
+    payload = {
+        "username": "Testuser1234",
+        "password": "Testpassword1234",
+    }
+    response = client.post("/auth/login", data=payload)
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Incorrect username or password"
+
+# Test case: Login with leading/trailing spaces in username and password
+def testCase2_login_route(InjectRegisterUser):
+    payload = {
+        "username": "       testuser@example.com",
+        "password": "Testpassword1234         ",
+    }
+    response = client.post("/auth/login", data=payload)
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Incorrect username or password"
+
+# Test case: Login with injection attempts in username and password
+def testCase3_login_route(InjectRegisterUser):
+    payload = {
+        "username": "{'$ne': null}",
+        "password": "Testpassword1234",
+    }
+    response = client.post("/auth/login", data=payload)
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Incorrect username or password"
+
+# Test case: Login with missing fields in the payload
+def testCase4_login_route(InjectRegisterUser):
+    payload = {
+        "email": "testuser@example.com",
+        "password": "Testpassword1234",
+    }
+    response = client.post("/auth/login", data=payload)
+    assert response.status_code == 422
+
 """
-
-## Login
-
-- **User enumeration:** the error for "wrong email" and "wrong password" should be identical (message and ideally response time)
-- **Case sensitivity of email**, and leading/trailing spaces
-- **Locked or disabled accounts**, and unverified accounts
-- **Brute force protection:** account lockout or rate limiting after N failures, and reset of the counter after success
-- **Injection attempts:** SQL/NoSQL injection payloads like `{"$ne": null}` in email or password
-- **Malformed requests:** invalid JSON, wrong content-type, empty body
-- **Token contents:** correct claims, expiry time set, no sensitive data in the payload
+# Test for rate limiting on login and register endpoints
 
 ## Token and session
 
@@ -245,7 +299,6 @@ def testCase3_register_route():
 
 ## Security and infrastructure
 
-- **Rate limiting** on login/register/reset
 - **Security headers and cookie flags:** `HttpOnly`, `Secure`, `SameSite`
 - **CORS behavior** for allowed and disallowed origins
 - **Sensitive data in logs:** passwords and tokens shouldn't appear
@@ -258,15 +311,5 @@ def testCase3_register_route():
 - **Concurrent logins** from multiple devices, if relevant
 - **Load and performance:** hashing cost (bcrypt rounds) vs response time under load
 
-## Test types
 
-| Type | What it covers |
-|---|---|
-| Unit | Validators, password hashing, token generation/verification |
-| Integration | Route + DB (using a test DB or in-memory one) |
-| E2E | Full flow: register → verify → login → access protected route → logout |
-| Security | Injection, JWT tampering, enumeration, brute force |
-| Load | Login endpoint under concurrent traffic |
-
-If you tell me your stack (Express, Jest/Supertest, Django, etc.) and whether you use JWT or sessions, I can write concrete test code for any of these.
 """
