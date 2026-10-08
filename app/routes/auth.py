@@ -75,7 +75,10 @@ async def authenticate_user(username: str, password: str, session: AsyncSession)
         if bcrypt.checkpw(password.encode("utf-8"), user.password.encode("utf-8")):
             return user
     except Exception as e:
-        print(f"Error occurred while authenticating user: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while authenticating the user: " + str(e),
+        )
 
     return None
 
@@ -147,7 +150,7 @@ async def check_before_register(user:User, db_session: AsyncSession):
 
         return None
     except SQLAlchemyError as e:
-        return HTTPException(
+        raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database error, Details: " + str(e),
         )
