@@ -5,6 +5,7 @@ from app.models import User
 from app.db import engine, Base, get_db_session
 
 from app.routes.auth import auth_router, get_user
+from app.routes.notes import notes_router
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +26,7 @@ app = FastAPI(
     lifespan=lifespan)
 
 app.include_router(auth_router)
-
+app.include_router(notes_router)
 
 @app.get("/", status_code=status.HTTP_200_OK)
 async def root():
