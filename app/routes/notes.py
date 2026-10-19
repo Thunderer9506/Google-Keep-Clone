@@ -119,3 +119,77 @@ async def create_note(notes: NotesModel, db: AsyncSession = Depends(get_db_sessi
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@notes_router.get("/", status_code=status.HTTP_200_OK)
+async def get_notes(db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
+    try:
+        stmt = select(Note).where(Note.user_id == user.id)
+        result = await db.execute(stmt)
+        notes = result.scalars().all()
+        for note in notes:
+            note.__dict__.pop("search_vector", None)
+        return notes
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@notes_router.get("/{note_id}", status_code=status.HTTP_200_OK)
+async def get_note(note_id: str, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
+    try:
+        stmt = select(Note).where(Note.id == note_id, Note.user_id == user.id)
+        result = await db.execute(stmt)
+        note = result.scalar_one_or_none()
+        if not note:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+        note.__dict__.pop("search_vector", None)
+        return note
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@notes_router.put("/{note_id}", status_code=status.HTTP_200_OK)
+async def update_note(note_id: str, notes: NotesModel, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
+    try:
+        stmt = select(Note).where(Note.id == note_id, Note.user_id == user.id)
+        result = await db.execute(stmt)
+        note = result.scalar_one_or_none()
+        if not note:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+        
+        note.title = notes.title
+        note.body = notes.body
+        note.color = notes.color
+        note.note_type = notes.note_type
+        note.image_url = notes.image_url
+        note.is_archived = notes.is_archived
+        note.is_trashed = notes.is_trashed
+        note.is_pinned = notes.is_pinned
+
+        if notes.note_type == "CHECKLIST":
+            if notes.checklist_items:
+                note.checklist_items.clear()
+                for item in notes.checklist_items:
+                    new_item = ChecklistItem(content=item.content, is_checked=item.is_checked)
+                    note.checklist_items.append(new_item)
+            else:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="checklist_items is required for CHECKLIST notes")
+        
+        if notes.tags:
+            note.tags.clear()
+            for tag in notes.tags:
+                stmt = select(Tag).where(Tag.name == tag.name, Tag.user_id == user.id)
+                existing_tag = (await db.execute(stmt)).scalar_one_or_none()
+                if existing_tag:
+                    note.tags.append(existing_tag)
+                else:
+                    new_tag = Tag(name=tag.name, user_id=user.id)
+                    db.add(new_tag)
+                    await db.flush()
+                    note.tags.append(new_tag)
+
+        await db.commit()
+        return notes
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
