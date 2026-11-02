@@ -24,40 +24,27 @@ class ChecklistItemBase(BaseModel):
     content: str
     is_checked: bool = False
 
-# 1. CREATE SCHEMA: Strict requirements for creating a note
 class NoteCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=50)
     body: str
     color: str = "#FFFFFF"
     note_type: Literal["TEXT", "CHECKLIST", "IMAGE"] = "TEXT"
     image_url: Optional[str] = None
-    checklist_items: Optional[List[ChecklistItemBase]] = None
     is_archived: bool = False
     is_trashed: bool = False
     is_pinned: bool = False
-    tags: Optional[List[TagBase]] = None
 
     @model_validator(mode="after")
     def validate_type_requirements(self):
         if self.note_type == "IMAGE" and not self.image_url:
             raise ValueError("image_url is required for IMAGE notes")
-        if self.note_type == "CHECKLIST" and not self.checklist_items:
-            raise ValueError("checklist_items is required for CHECKLIST notes")
         return self
 
-# 2. UPDATE SCHEMA: All fields are optional for partial updates (PATCH)
 class NoteUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=3, max_length=50)
     body: Optional[str] = None
     color: Optional[str] = None
-    is_archived: Optional[bool] = None
-    is_trashed: Optional[bool] = None
-    is_pinned: Optional[bool] = None
-    # Lists usually require full replacement on update
-    checklist_items: Optional[List[ChecklistItemBase]] = None
-    tags: Optional[List[TagBase]] = None
 
-# 3. RESPONSE SCHEMA: What the client actually receives
 class NoteResponse(BaseModel):
     id: str
     title: str
@@ -73,46 +60,6 @@ class NoteResponse(BaseModel):
     
     # This config tells Pydantic to read from SQLAlchemy ORM models
     model_config = ConfigDict(from_attributes=True)
-
-
-@notes_router.post("/", status_code=status.HTTP_201_CREATED, response_model=NoteResponse)
-async def create_note(note_in: NoteCreate, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
-    try:
-        new_note = Note(
-            user_id=user.id,
-            title=note_in.title,
-            body=note_in.body,
-            color=note_in.color,
-            note_type=note_in.note_type,
-            image_url=note_in.image_url,
-            is_archived=note_in.is_archived,
-            is_trashed=note_in.is_trashed,
-            is_pinned=note_in.is_pinned
-        )
-        
-        if note_in.note_type == "CHECKLIST" and note_in.checklist_items:
-            new_note.checklist_items = [
-                ChecklistItem(content=item.content, is_checked=item.is_checked) 
-                for item in note_in.checklist_items
-            ]
-
-        if note_in.tags:
-            for tag_in in note_in.tags:
-                stmt = select(Tag).where(Tag.name == tag_in.name, Tag.user_id == user.id)
-                existing_tag = (await db.execute(stmt)).scalar_one_or_none()
-                
-                tag_obj = existing_tag or Tag(name=tag_in.name, user_id=user.id)
-                new_note.tags.append(tag_obj)
-
-        db.add(new_note)
-        await db.commit()
-        
-        await db.refresh(new_note, ["tags", "checklist_items"])
-        return new_note
-
-    except Exception as e:
-        await db.rollback() # Fix: Await the rollback
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @notes_router.get("/", status_code=status.HTTP_200_OK, response_model=List[NoteResponse])
@@ -131,6 +78,32 @@ async def get_notes(
     )
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+@notes_router.post("/", status_code=status.HTTP_201_CREATED, response_model=NoteResponse)
+async def create_note(note_in: NoteCreate, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
+    try:
+        new_note = Note(
+            user_id=user.id,
+            title=note_in.title,
+            body=note_in.body,
+            color=note_in.color,
+            note_type=note_in.note_type,
+            image_url=note_in.image_url,
+            is_archived=note_in.is_archived,
+            is_trashed=note_in.is_trashed,
+            is_pinned=note_in.is_pinned
+        )
+
+        db.add(new_note)
+        await db.commit()
+        
+        await db.refresh(new_note, ["tags", "checklist_items"])
+        return new_note
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @notes_router.get("/{note_id}", status_code=status.HTTP_200_OK, response_model=NoteResponse)
@@ -160,30 +133,11 @@ async def update_note(note_id: str, note_in: NoteUpdate, db: AsyncSession = Depe
     if not note:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
     
-    # Partial update logic: only update fields that were actually provided
     update_data = note_in.model_dump(exclude_unset=True)
     
-    # Handle scalar fields dynamically
-    for field in ["title", "body", "color", "is_archived", "is_trashed", "is_pinned"]:
+    for field in ["title", "body", "color"]:
         if field in update_data:
             setattr(note, field, update_data[field])
-
-    # Handle relationships manually if they were provided
-    if "checklist_items" in update_data and note.note_type == "CHECKLIST":
-        # In a real production app, clearing and recreating items drops their primary keys.
-        # It is often better to update existing items by ID, but for a Keep clone, full replacement is common.
-        note.checklist_items = [
-            ChecklistItem(content=item.content, is_checked=item.is_checked) 
-            for item in note_in.checklist_items
-        ]
-
-    if "tags" in update_data:
-        new_tags = []
-        for tag_in in note_in.tags:
-            tag_stmt = select(Tag).where(Tag.name == tag_in.name, Tag.user_id == user.id)
-            existing_tag = (await db.execute(tag_stmt)).scalar_one_or_none()
-            new_tags.append(existing_tag or Tag(name=tag_in.name, user_id=user.id))
-        note.tags = new_tags
 
     await db.commit()
     await db.refresh(note, ["tags", "checklist_items"])
@@ -199,7 +153,13 @@ async def archive_note(note_id: str, db: AsyncSession = Depends(get_db_session),
     if not note:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
 
-    note.is_archived = True
+    if note.is_archived == True:
+        note.is_archived = False
+    else:
+        note.is_archived = True
+        note.is_pinned = False
+        note.is_trashed = False
+    
     await db.commit()
     await db.refresh(note, ["tags", "checklist_items"])
     return note
@@ -214,7 +174,13 @@ async def pin_note(note_id: str, db: AsyncSession = Depends(get_db_session), use
     if not note:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
 
-    note.is_pinned = True
+    if note.is_pinned == True:
+        note.is_pinned = False
+    else:
+        note.is_archived = False
+        note.is_pinned = True
+        note.is_trashed = False
+    
     await db.commit()
     await db.refresh(note, ["tags", "checklist_items"])
     return note
@@ -229,7 +195,13 @@ async def trash_note(note_id: str, db: AsyncSession = Depends(get_db_session), u
     if not note:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
 
-    note.is_trashd = True
+    if note.is_trashed == True:
+        note.is_trashed = False
+    else:
+        note.is_archived = False
+        note.is_pinned = False
+        note.is_trashed = True
+    
     await db.commit()
     await db.refresh(note, ["tags", "checklist_items"])
     return note
@@ -243,7 +215,18 @@ async def delete_note(note_id: str, db: AsyncSession = Depends(get_db_session), 
     
     if not note:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+
+    if note.is_archived or note.is_pinned:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete archived or pinned notes")
+
+    if note.is_trashed == False:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Note must be trashed before deletion")
     
     await db.delete(note)
     await db.commit()
     return None
+
+
+@notes_router.get("/{note_id}",status_code=status.HTTP_200_OK, response_model=List[NoteResponse])
+async def filter_note(note_id: str, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
+    pass
