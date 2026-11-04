@@ -22,7 +22,7 @@ auth_router = APIRouter(
     prefix="/auth",
     tags=["auth"],
 )
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")  
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 class Credentials(BaseModel):
     username: str = Field(
@@ -58,26 +58,26 @@ class Credentials(BaseModel):
         if not any(char.isdigit() for char in value):
             raise ValueError("Password must contain a digit")
         return value
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "Bearer"
 
 async def authenticate_user(username: str, password: str, session: AsyncSession) -> User | None:
-    try: 
-        # User will be able to login with either username or email
+    try:
         findUser_stmt = select(User).where(or_(User.username == username, User.email == username))
         user = await session.execute(findUser_stmt)
         user: User | None = user.scalar_one_or_none()
-        
+
         if user is None:
             return None
-        
+
         if bcrypt.checkpw(password.encode("utf-8"), user.password.encode("utf-8")):
             return user
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while authenticating the user: " + str(e),
+            detail="An error occurred while authenticating the user",
         )
 
     return None
@@ -111,17 +111,16 @@ async def get_user(token: str = Depends(oauth2_scheme), db_session: AsyncSession
         user: User | None = user.scalar_one_or_none()
         if user is None:
             raise cred_exc
-    except SQLAlchemyError as e:
+    except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error, Details: " + str(e),
+            detail="Database error",
         )
-    
+
     return user
 
 @auth_router.post("/login", response_model=Token, description="Generate token", summary="Login User", status_code=status.HTTP_200_OK)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: AsyncSession = Depends(get_db_session)):
-    # Placeholder for login logic
     user = await authenticate_user(form_data.username, form_data.password, session=session)
     if not user:
         raise HTTPException(
@@ -133,13 +132,12 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Async
     access_token = create_access_token(payload)
     return Token(access_token=access_token, token_type="Bearer")
 
-async def check_before_register(user:User, db_session: AsyncSession):
+async def check_before_register(user: User, db_session: AsyncSession):
     try:
-        # Check if the username or email already exists in the database
         findUser_stmt = select(User).where(
-            or_(func.lower(User.username) == user.username.lower(), 
+            or_(func.lower(User.username) == user.username.lower(),
                 func.lower(User.email) == user.email.lower())
-                )
+        )
         existing_user = await db_session.execute(findUser_stmt)
         existing_user: User | None = existing_user.scalar_one_or_none()
         if existing_user is not None:
@@ -147,41 +145,36 @@ async def check_before_register(user:User, db_session: AsyncSession):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username or email already exists",
             )
-
-        return None
-    except SQLAlchemyError as e:
+    except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error, Details: " + str(e),
+            detail="Database error",
         )
-
 
 @auth_router.post("/register", description="Register a new user", summary="User Registration", status_code=status.HTTP_201_CREATED)
 async def register(req: Credentials, db_session: AsyncSession = Depends(get_db_session)):
-    # Placeholder for registration logic
     try:
         password = req.password
         bytes_password = password.encode('utf-8')
         hashed_password = bcrypt.hashpw(bytes_password, bcrypt.gensalt())
         newUser = User(
-            username=req.username, 
+            username=req.username,
             email=req.email,
             password=hashed_password.decode("utf-8")
         )
         await check_before_register(newUser, db_session)
         db_session.add(newUser)
         await db_session.commit()
-    except IntegrityError as e:
+    except IntegrityError:
         await db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username or email already exists",
         )
-    except SQLAlchemyError as e:
+    except SQLAlchemyError:
         await db_session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error, Details: " + str(e),
+            detail="Database error",
         )
     return {"message": "User registered successfully", "username": req.username, "email": req.email}
-        
