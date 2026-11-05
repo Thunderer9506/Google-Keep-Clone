@@ -27,6 +27,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan)
 
+
 app.include_router(auth_router)
 app.include_router(notes_router)
 app.include_router(checklist_router)
