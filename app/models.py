@@ -1,5 +1,5 @@
 from sqlalchemy.orm import relationship, mapped_column, Mapped
-from sqlalchemy import DateTime, String, ForeignKey, Computed
+from sqlalchemy import DateTime, String, ForeignKey, Computed, Text, event
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from datetime import datetime
 from app.db import Base
@@ -86,6 +86,6 @@ class NoteTag(Base):
 
     note_id: Mapped[str] = mapped_column(ForeignKey('notes.id'), primary_key=True)
     tag_id: Mapped[str] = mapped_column(ForeignKey('tags.id'), primary_key=True)
-    
+
     def __repr__(self):
         return f"<NoteTag(note_id={self.note_id}, tag_id={self.tag_id})>"
