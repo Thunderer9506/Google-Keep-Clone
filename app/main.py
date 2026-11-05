@@ -6,7 +6,6 @@ from app.db import engine, Base, get_db_session
 
 from app.routes.auth import auth_router, get_user
 from app.routes.notes import notes_router
-from app.routes.checklist import checklist_router
 from app.routes.tags import tags_router
 
 from sqlalchemy import select
@@ -30,7 +29,6 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(notes_router)
-app.include_router(checklist_router)
 app.include_router(tags_router)
 
 @app.get("/", status_code=status.HTTP_200_OK)
