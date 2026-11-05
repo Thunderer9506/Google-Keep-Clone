@@ -17,13 +17,16 @@ notes_router = APIRouter(
 )
 
 class TagBase(BaseModel):
-    id: str
     name: str = Field(..., min_length=1, max_length=50)
-
 class ChecklistItemBase(BaseModel):
-    id: str
     content: str
     is_checked: bool = False
+
+class TagResponse(TagBase):
+    id: str
+    
+class ChecklistItemResponse(ChecklistItemBase):
+    id: str
 
 class NoteCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=50)
@@ -94,8 +97,8 @@ class NoteResponse(BaseModel):
     is_archived: bool
     is_trashed: bool
     is_pinned: bool
-    checklist_items: List[ChecklistItemBase] = []
-    tags: List[TagBase] = []
+    checklist_items: List[ChecklistItemResponse] = []
+    tags: List[TagResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -226,7 +229,7 @@ async def update_note(note_id: str, note_in: NoteUpdate, db: AsyncSession = Depe
             elif field == "tags":
                 note.tags.clear()
                 for tag_data in value:
-                    stmt = select(Tag).where(Tag.name == tag_data.name, Tag.user_id == user.id)
+                    stmt = select(Tag).where(Tag.id == tag_data.id, Tag.user_id == user.id)
                     result = await db.execute(stmt)
                     existing_tag = result.scalar_one_or_none()
                     if existing_tag:
@@ -246,131 +249,26 @@ async def update_note(note_id: str, note_in: NoteUpdate, db: AsyncSession = Depe
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch note")
 
 
-@notes_router.patch("/{note_id}/archive", status_code=status.HTTP_200_OK, response_model=NoteResponse)
-async def archive_note(note_id: str, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
-    stmt = select(Note).where(Note.id == note_id, Note.user_id == user.id)
-    result = await db.execute(stmt)
-    note = result.scalar_one_or_none()
-
-    if not note:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
-
-    note.is_archived = not note.is_archived
-    if note.is_archived:
-        note.is_pinned = False
-        note.is_trashed = False
-
-    await db.commit()
-    await db.refresh(note, ["tags", "checklist_items"])
-    return note
-
-
-@notes_router.patch("/{note_id}/pin", status_code=status.HTTP_200_OK, response_model=NoteResponse)
-async def pin_note(note_id: str, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
-    stmt = select(Note).where(Note.id == note_id, Note.user_id == user.id)
-    result = await db.execute(stmt)
-    note = result.scalar_one_or_none()
-
-    if not note:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
-
-    note.is_pinned = not note.is_pinned
-    if note.is_pinned:
-        note.is_archived = False
-        note.is_trashed = False
-
-    await db.commit()
-    await db.refresh(note, ["tags", "checklist_items"])
-    return note
-
-
-@notes_router.patch("/{note_id}/trash", status_code=status.HTTP_200_OK, response_model=NoteResponse)
-async def trash_note(note_id: str, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
-    stmt = select(Note).where(Note.id == note_id, Note.user_id == user.id)
-    result = await db.execute(stmt)
-    note = result.scalar_one_or_none()
-
-    if not note:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
-
-    note.is_trashed = not note.is_trashed
-    if note.is_trashed:
-        note.is_archived = False
-        note.is_pinned = False
-
-    await db.commit()
-    await db.refresh(note, ["tags", "checklist_items"])
-    return note
-
-
-@notes_router.patch("/{note_id}/restore", status_code=status.HTTP_200_OK, response_model=NoteResponse)
-async def restore_note(note_id: str, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
-    stmt = select(Note).where(Note.id == note_id, Note.user_id == user.id)
-    result = await db.execute(stmt)
-    note = result.scalar_one_or_none()
-
-    if not note:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
-
-    if not note.is_trashed:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Note is not trashed")
-
-    note.is_trashed = False
-    await db.commit()
-    await db.refresh(note, ["tags", "checklist_items"])
-    return note
-
-
 @notes_router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_note(note_id: str, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
-    stmt = select(Note).where(Note.id == note_id, Note.user_id == user.id)
-    result = await db.execute(stmt)
-    note = result.scalar_one_or_none()
+    try:
+        stmt = select(Note).where(Note.id == note_id, Note.user_id == user.id)
+        result = await db.execute(stmt)
+        note = result.scalar_one_or_none()
 
-    if not note:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+        if not note:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
 
-    if note.is_archived or note.is_pinned:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete archived or pinned notes")
+        if note.is_archived or note.is_pinned:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete archived or pinned notes")
 
-    if not note.is_trashed:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Note must be trashed before deletion")
+        if not note.is_trashed:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Note must be trashed before deletion")
 
-    await db.delete(note)
-    await db.commit()
-    return None
-
-
-@notes_router.post("/{note_id}/tags/{tag_id}", status_code=status.HTTP_200_OK, response_model=NoteResponse)
-async def add_tag_to_note(note_id: str, tag_id: str, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
-    stmt = select(Note).where(Note.id == note_id, Note.user_id == user.id).options(selectinload(Note.tags))
-    result = await db.execute(stmt)
-    note = result.scalar_one_or_none()
-    if not note:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
-
-    tag_stmt = select(Tag).where(Tag.id == tag_id, Tag.user_id == user.id)
-    tag_result = await db.execute(tag_stmt)
-    tag = tag_result.scalar_one_or_none()
-    if not tag:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
-
-    if tag not in note.tags:
-        note.tags.append(tag)
+        await db.delete(note)
         await db.commit()
-        await db.refresh(note, ["tags", "checklist_items"])
-    return note
+        return None
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete note")
 
-
-@notes_router.delete("/{note_id}/tags/{tag_id}", status_code=status.HTTP_200_OK, response_model=NoteResponse)
-async def remove_tag_from_note(note_id: str, tag_id: str, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
-    stmt = select(Note).where(Note.id == note_id, Note.user_id == user.id).options(selectinload(Note.tags))
-    result = await db.execute(stmt)
-    note = result.scalar_one_or_none()
-    if not note:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
-
-    note.tags = [t for t in note.tags if t.id != tag_id]
-    await db.commit()
-    await db.refresh(note, ["tags", "checklist_items"])
-    return note
