@@ -12,16 +12,11 @@ from sqlalchemy.pool import NullPool
 
 from app.db import Base, get_db_session
 from app.main import app
+from app.config import config
 
 
-TEST_DB_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://myuser:mypassword@localhost:5432/test_db",
-)
-ADMIN_URL = os.getenv(
-    "TEST_ADMIN_DATABASE_URL",
-    "postgresql+asyncpg://myuser:mypassword@localhost:5432/keep_clone_db",
-)
+TEST_DB_URL = config.TEST_DB_URL
+ADMIN_URL = config.DB_URL
 
 engine = create_async_engine(TEST_DB_URL, echo=False, poolclass=NullPool)
 TestingSessionLocal = async_sessionmaker(
