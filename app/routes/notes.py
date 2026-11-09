@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from sqlalchemy import select, func
@@ -10,6 +11,8 @@ from app.models import User, Note, ChecklistItem, Tag
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional, List, Literal
+
+logger = logging.getLogger("google_keep_clone_app.routes.notes")
 
 notes_router = APIRouter(
     prefix="/notes",
@@ -67,9 +70,9 @@ class NoteUpdate(BaseModel):
     body: Optional[str] = None
     color: Optional[str] = None
     image_url: Optional[str] = None
-    is_archived: Optional[bool] = None
-    is_trashed: Optional[bool] = None
-    is_pinned: Optional[bool] = None
+    is_archived: Optional[bool] = False
+    is_trashed: Optional[bool] = False
+    is_pinned: Optional[bool] = False
     checklist_items: Optional[List[ChecklistItemBase]] = []
     tags: Optional[List[TagBase]] = []
 
@@ -135,9 +138,12 @@ async def get_notes(
             stmt = stmt.where(Note.search_vector.contains(search))
 
         result = await db.execute(stmt)
-        return result.scalars().all()
-    except Exception as e:
+        notes = result.scalars().all()
+        logger.info("Notes fetched: count=%s user_id=%s", len(notes), user.id)
+        return notes
+    except Exception:
         await db.rollback()
+        logger.exception("Failed to fetch notes: user_id=%s", user.id)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch notes")
 
 
@@ -153,9 +159,13 @@ async def get_note(note_id: str, db: AsyncSession = Depends(get_db_session), use
         note = result.scalar_one_or_none()
         if not note:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+        logger.info("Note fetched: note_id=%s user_id=%s", note_id, user.id)
         return note
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         await db.rollback()
+        logger.exception("Failed to fetch note: note_id=%s user_id=%s", note_id, user.id)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch note")
 
 
@@ -196,10 +206,12 @@ async def create_note(note_in: NoteCreate, db: AsyncSession = Depends(get_db_ses
         db.add(new_note)
         await db.commit()
         await db.refresh(new_note, ["tags", "checklist_items"])
+        logger.info("Note created: note_id=%s user_id=%s", new_note.id, user.id)
         return new_note
 
-    except Exception as e:
+    except Exception:
         await db.rollback()
+        logger.exception("Failed to create note: user_id=%s", user.id)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create note")
 
 
@@ -243,9 +255,13 @@ async def update_note(note_id: str, note_in: NoteUpdate, db: AsyncSession = Depe
 
         await db.commit()
         await db.refresh(note, ["tags", "checklist_items"])
+        logger.info("Note updated: note_id=%s user_id=%s", note_id, user.id)
         return note
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         await db.rollback()
+        logger.exception("Failed to update note: note_id=%s user_id=%s", note_id, user.id)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch note")
 
 
@@ -267,8 +283,11 @@ async def delete_note(note_id: str, db: AsyncSession = Depends(get_db_session), 
 
         await db.delete(note)
         await db.commit()
+        logger.info("Note deleted: note_id=%s user_id=%s", note_id, user.id)
         return None
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         await db.rollback()
+        logger.exception("Failed to delete note: note_id=%s user_id=%s", note_id, user.id)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete note")
-

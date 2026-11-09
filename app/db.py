@@ -1,7 +1,12 @@
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.exc import SQLAlchemyError
 from typing import AsyncGenerator
 from sqlalchemy.orm import DeclarativeBase
 from app.config import config
+
+logger = logging.getLogger("google_keep_clone_app.db")
+
 
 class Base(DeclarativeBase):
     pass
@@ -19,9 +24,10 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     FastAPI dependency yielding an async session.
     Automatically handles cleanup/closing after the request lifecycle.
     """
-    async with async_session() as session:
-        try:
+    try:
+        async with async_session() as session:
             yield session
-        finally:
-            await session.close()
+    except SQLAlchemyError:
+        logger.exception("Database session failed")
+        raise
         

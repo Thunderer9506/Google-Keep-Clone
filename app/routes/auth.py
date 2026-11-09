@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 
@@ -12,6 +13,8 @@ from pydantic import BaseModel, Field, field_validator
 import bcrypt
 import jwt
 from datetime import datetime, timedelta, timezone
+
+logger = logging.getLogger("google_keep_clone_app.routes.auth")
 
 
 SECRET_KEY = config.SECRET_KEY
@@ -73,8 +76,10 @@ async def authenticate_user(username: str, password: str, session: AsyncSession)
             return None
 
         if bcrypt.checkpw(password.encode("utf-8"), user.password.encode("utf-8")):
+            logger.info("Authenticated user: user_id=%s", user.id)
             return user
     except Exception as e:
+        logger.exception("Unexpected error while authenticating user")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while authenticating the user",
@@ -102,7 +107,8 @@ async def get_user(token: str = Depends(oauth2_scheme), db_session: AsyncSession
         userId: str = payload.get("sub")
         if userId is None:
             raise cred_exc
-    except Exception:
+    except jwt.PyJWTError:
+        logger.warning("Rejected invalid authentication token")
         raise cred_exc
 
     try:
@@ -112,6 +118,7 @@ async def get_user(token: str = Depends(oauth2_scheme), db_session: AsyncSession
         if user is None:
             raise cred_exc
     except SQLAlchemyError:
+        logger.exception("Database error while loading authenticated user")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database error",
@@ -123,6 +130,7 @@ async def get_user(token: str = Depends(oauth2_scheme), db_session: AsyncSession
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: AsyncSession = Depends(get_db_session)):
     user = await authenticate_user(form_data.username, form_data.password, session=session)
     if not user:
+        logger.warning("Login rejected for username=%s", form_data.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -130,6 +138,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Async
         )
     payload = {"sub": user.id, "username": user.username, "email": user.email}
     access_token = create_access_token(payload)
+    logger.info("User logged in successfully: user_id=%s", user.id)
     return Token(access_token=access_token, token_type="Bearer")
 
 async def check_before_register(user: User, db_session: AsyncSession):
@@ -141,11 +150,13 @@ async def check_before_register(user: User, db_session: AsyncSession):
         existing_user = await db_session.execute(findUser_stmt)
         existing_user: User | None = existing_user.scalar_one_or_none()
         if existing_user is not None:
+            logger.warning("Registration rejected because username or email already exists")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username or email already exists",
             )
     except SQLAlchemyError:
+        logger.exception("Database error while checking user registration")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database error",
@@ -165,16 +176,19 @@ async def register(req: Credentials, db_session: AsyncSession = Depends(get_db_s
         await check_before_register(newUser, db_session)
         db_session.add(newUser)
         await db_session.commit()
+        logger.info("User registered successfully: username=%s", req.username)
     except IntegrityError:
         await db_session.rollback()
+        logger.exception("User registration failed due to a database integrity error")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username or email already exists",
         )
     except SQLAlchemyError:
         await db_session.rollback()
+        logger.exception("User registration failed due to a database error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database error",
         )
-    return {"message": "User registered successfully", "username": req.username, "email": req.email}
+    return {"message": "User registered successfully"}

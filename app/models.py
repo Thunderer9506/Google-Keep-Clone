@@ -1,10 +1,15 @@
+import logging
 from sqlalchemy.orm import relationship, mapped_column, Mapped
-from sqlalchemy import DateTime, String, ForeignKey, Computed, Text, event
+from sqlalchemy import DateTime, String, ForeignKey, Computed
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from datetime import datetime
 from app.db import Base
 import uuid
 from typing import Literal
+
+logger = logging.getLogger("google_keep_clone_app.models")
+logger.info("Database models loaded")
+
 
 class User(Base):
     __tablename__ = 'users'

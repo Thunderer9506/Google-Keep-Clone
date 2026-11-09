@@ -1,23 +1,30 @@
-from fastapi import Depends, FastAPI, HTTPException, status
+import logging
+from app.logs import configure_logging
+
+configure_logging()
+
+from fastapi import FastAPI, status
 from contextlib import asynccontextmanager
 
-from app.models import User
-from app.db import engine, Base, get_db_session
+from app.db import engine, Base
 
-from app.routes.auth import auth_router, get_user
+from app.routes.auth import auth_router
 from app.routes.notes import notes_router
 from app.routes.tags import tags_router
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+logger = logging.getLogger("google_keep_clone_app")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize the database
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    print("⬆️ Database connected")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except Exception:
+        logger.exception("Application startup failed while initializing the database")
+        raise
+    logger.info("Database connected")
     yield
 
 app = FastAPI(
@@ -31,13 +38,7 @@ app.include_router(auth_router)
 app.include_router(notes_router)
 app.include_router(tags_router)
 
-@app.get("/", status_code=status.HTTP_200_OK)
+@app.get("/health", status_code=status.HTTP_200_OK)
 async def root():
+    logger.info("Health check requested")
     return {"message": "Welcome to the Google Keep Clone API!"}
-
-@app.get("/me", status_code=status.HTTP_200_OK)
-async def get_current_user(current_user: User = Depends(get_user)):
-    return {"id": current_user.id, 
-            "email": current_user.email, 
-            "username": current_user.username
-            }

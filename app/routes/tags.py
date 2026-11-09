@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from sqlalchemy import select
@@ -8,8 +9,10 @@ from app.db import get_db_session
 from app.routes.auth import get_user
 from app.models import User, Tag
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List
+
+logger = logging.getLogger("google_keep_clone_app.routes.tags")
 
 tags_router = APIRouter(
     prefix="/tags",
@@ -21,18 +24,20 @@ class TagBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=50)
 
 class TagResponse(TagBase):
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 @tags_router.get("/", status_code=status.HTTP_200_OK, response_model=List[TagResponse])
 async def get_tags(db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
     try:
         stmt = select(Tag).where(Tag.user_id == user.id)
         result = await db.execute(stmt)
-        return result.scalars().all()
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
+        tags = result.scalars().all()
+        logger.info("Tags fetched: count=%s user_id=%s", len(tags), user.id)
+        return tags
+    except Exception:
+        logger.exception("Failed to fetch tags: user_id=%s", user.id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to fetch tags")
+    
 
 @tags_router.post("/", status_code=status.HTTP_201_CREATED, response_model=TagResponse)
 async def create_tag(tag: TagBase, db: AsyncSession = Depends(get_db_session), user: User = Depends(get_user)):
@@ -41,16 +46,21 @@ async def create_tag(tag: TagBase, db: AsyncSession = Depends(get_db_session), u
         result = await db.execute(stmt)
         existing_tag = result.scalar_one_or_none()
         if existing_tag:
+            logger.warning("Tag creation rejected because tag already exists: user_id=%s", user.id)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tag already exists")
 
         new_tag = Tag(name=tag.name, user_id=user.id)
         db.add(new_tag)
         await db.commit()
         await db.refresh(new_tag)
+        logger.info("Tag created: tag_id=%s user_id=%s", new_tag.id, user.id)
         return new_tag
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        logger.exception("Failed to create tag: user_id=%s", user.id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create tag")
 
 
 @tags_router.patch("/{tag_id}", status_code=status.HTTP_200_OK, response_model=TagResponse)
@@ -65,10 +75,14 @@ async def update_tag(tag_id: str, tag: TagBase, db: AsyncSession = Depends(get_d
         existing_tag.name = tag.name
         await db.commit()
         await db.refresh(existing_tag)
+        logger.info("Tag updated: tag_id=%s user_id=%s", tag_id, user.id)
         return existing_tag
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        logger.exception("Failed to update tag: tag_id=%s user_id=%s", tag_id, user.id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update tag")
 
 
 @tags_router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -80,6 +94,12 @@ async def delete_tag(tag_id: str, db: AsyncSession = Depends(get_db_session), us
     if not tag:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
 
-    await db.delete(tag)
-    await db.commit()
+    try:
+        await db.delete(tag)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("Failed to delete tag: tag_id=%s user_id=%s", tag_id, user.id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete tag")
+    logger.info("Tag deleted: tag_id=%s user_id=%s", tag_id, user.id)
     return None

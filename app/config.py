@@ -1,7 +1,11 @@
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger("google_keep_clone_app.config")
+
 
 class Settings():
     DB_URL: str = os.getenv("DB_URL","postgresql+asyncpg://myuser:mypassword@localhost:5432/keep_clone_db")
@@ -11,3 +15,4 @@ class Settings():
     ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60))
 
 config = Settings()
+logger.info("Application configuration loaded")
