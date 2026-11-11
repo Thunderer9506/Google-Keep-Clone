@@ -11,7 +11,14 @@ logger = logging.getLogger("google_keep_clone_app.db")
 class Base(DeclarativeBase):
     pass
 
-engine = create_async_engine(config.DB_URL, echo=True)
+engine = create_async_engine(
+    config.DB_URL, 
+    echo=True,  # Enable SQL query logging for debugging
+    pool_size=5,
+    max_overflow=5,
+    pool_pre_ping=True,  # Handles stale connections
+    pool_recycle=3600,
+)
 
 async_session = async_sessionmaker(
     bind=engine, 
