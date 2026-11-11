@@ -2,11 +2,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 
-from sqlalchemy import select, or_, func
+from sqlalchemy import delete, select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from app.db import get_db_session
-from app.models import User
+from app.models import ChecklistItem, Note, NoteTag, Tag, User
 from app.config import config
 
 from pydantic import BaseModel, Field, field_validator
@@ -140,6 +140,38 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Async
     access_token = create_access_token(payload)
     logger.info("User logged in successfully: user_id=%s", user.id)
     return Token(access_token=access_token, token_type="Bearer")
+
+@auth_router.delete("/logout", status_code=status.HTTP_200_OK)
+async def logout(
+    current_user: User = Depends(get_user),
+    db_session: AsyncSession = Depends(get_db_session),
+):
+    try:
+        note_ids = select(Note.id).where(Note.user_id == current_user.id)
+        tag_ids = select(Tag.id).where(Tag.user_id == current_user.id)
+
+        await db_session.execute(
+            delete(NoteTag).where(
+                NoteTag.note_id.in_(note_ids) | NoteTag.tag_id.in_(tag_ids)
+            )
+        )
+        await db_session.execute(
+            delete(ChecklistItem).where(ChecklistItem.note_id.in_(note_ids))
+        )
+        await db_session.execute(delete(Note).where(Note.id.in_(note_ids)))
+        await db_session.execute(delete(Tag).where(Tag.id.in_(tag_ids)))
+        await db_session.execute(delete(User).where(User.id == current_user.id))
+        await db_session.commit()
+    except SQLAlchemyError:
+        await db_session.rollback()
+        logger.exception("User logout cleanup failed due to a database error")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error",
+        )
+
+    logger.info("User logged out and deleted successfully: user_id=%s", current_user.id)
+    return {"message": "User logged out and deleted successfully"}
 
 async def check_before_register(user: User, db_session: AsyncSession):
     try:
