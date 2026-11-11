@@ -16,6 +16,8 @@ from app.config import config as app_config
 config = context.config
 
 db_url = app_config.DB_URL.replace("asyncpg", "psycopg2")
+if "@postgres:" in db_url:
+    db_url = db_url.replace("@postgres:", "@localhost:")
 if db_url:
     config.set_main_option("sqlalchemy.url", db_url)
 else:
